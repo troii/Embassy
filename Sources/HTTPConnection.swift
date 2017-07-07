@@ -13,11 +13,13 @@ public final class HTTPConnection {
     enum RequestState {
         case parsingHeader
         case readingBody
+        case finished
     }
 
     enum ResponseState {
         case sendingHeader
         case sendingBody
+        case finished
     }
 
     public let logger = DefaultLogger()
@@ -81,6 +83,8 @@ public final class HTTPConnection {
             handleHeaderData(data)
         case .readingBody:
             handleBodyData(data)
+        case .finished:
+            return
         }
     }
 
@@ -92,10 +96,12 @@ public final class HTTPConnection {
         headerElements += headerParser.feed(data)
         // we only handle when there are elements in header parser
         guard let lastElement = headerElements.last else {
+            finishRequest()
             return
         }
         // we only handle the it when we get the end of header
         guard case .end = lastElement else {
+            finishRequest()
             return
         }
 
@@ -196,6 +202,7 @@ public final class HTTPConnection {
         if let length = contentLength, readDataLength >= length {
             handler(Data())
             inputHandler = nil
+            finishRequest()
         }
     }
 
@@ -232,9 +239,7 @@ public final class HTTPConnection {
             return
         }
         guard data.count > 0 else {
-            // TODO: support keep-alive connection here?
-            logger.info("Finish response")
-            transport.close()
+            finishResponse()
             return
         }
         transport.write(data: data)
@@ -251,6 +256,28 @@ public final class HTTPConnection {
         if let callback = closedCallback {
             callback()
         }
+    }
+    
+    private func finishRequest() {
+        logger.info("Finish request")
+        requestState = .finished
+        closeIfAllFinished()
+    }
+    
+    private func finishResponse() {
+        logger.info("Finish response")
+        responseState = .finished
+        closeIfAllFinished()
+    }
+    
+    private func closeIfAllFinished() {
+        // TODO: support keep-alive connection here?
+        guard requestState == .finished, responseState == .finished else {
+            return
+        }
+        
+        logger.info("Finish all")
+        close()
     }
 }
 
